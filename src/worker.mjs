@@ -1,17 +1,50 @@
 import { Buffer } from "node:buffer";
 
+let apiKeys = [];
+let apiKeyIndex = 0;
+
 export default {
   async fetch (request) {
     if (request.method === "OPTIONS") {
       return handleOPTIONS();
     }
+
+    // Get API key(s) from Authorization header
+    const authHeader = request.headers.get("Authorization");
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return new Response("Authorization header with Bearer token is missing or invalid.", { status: 401 });
+    }
+
+    const apiKeyPayload = authHeader.substring(7); // Remove "Bearer "
+
+    try {
+      // Attempt to parse as JSON array
+      const parsedKeys = JSON.parse(apiKeyPayload);
+      if (Array.isArray(parsedKeys) && parsedKeys.length > 0) {
+        apiKeys = parsedKeys;
+      } else {
+        // If not a valid array, treat as a single key
+        apiKeys = [apiKeyPayload];
+      }
+    } catch (e) {
+      // If JSON parsing fails, treat as a single key
+      apiKeys = [apiKeyPayload];
+    }
+
+    if (apiKeys.length === 0) {
+       return new Response("No API keys provided in the Bearer token.", { status: 400 });
+    }
+
+    // Select API key using round-robin
+    const apiKey = apiKeys[apiKeyIndex];
+    apiKeyIndex = (apiKeyIndex + 1) % apiKeys.length;
+
     const errHandler = (err) => {
       console.error(err);
       return new Response(err.message, fixCors({ status: err.status ?? 500 }));
     };
     try {
-      const auth = request.headers.get("Authorization");
-      const apiKey = auth?.split(" ")[1];
       const assert = (success) => {
         if (!success) {
           throw new HttpError("The specified HTTP method is not allowed for the requested resource", 400);
@@ -33,7 +66,7 @@ export default {
             .catch(errHandler);
         default:
           throw new HttpError("404 Not Found", 404);
-      }
+        }
     } catch (err) {
       return errHandler(err);
     }
